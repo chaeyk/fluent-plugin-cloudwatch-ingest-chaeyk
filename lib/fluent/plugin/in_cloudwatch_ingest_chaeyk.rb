@@ -314,8 +314,6 @@ module Fluent::Plugin
           # Migrate old state file
           @store.each { |group, streams|
             streams.update(streams) { |name, stream|
-              print stream
-              print "\n"
               (stream.is_a? String) ? { 'token' => stream, 'timestamp' => Time.now.to_i } : stream
             }
           }
