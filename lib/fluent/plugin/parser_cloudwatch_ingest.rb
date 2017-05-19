@@ -4,7 +4,7 @@ require 'fluent/time'
 module Fluent
   module Plugin
     class CloudwatchIngestParser < RegexpParser
-      Plugin.register_parser('cloudwatch_ingest', self)
+      Plugin.register_parser('cloudwatch_ingest_chaeyk', self)
 
       config_param :expression, :string, default: '^(?<message>.+)$'
       config_param :time_format, :string, default: '%Y-%m-%d %H:%M:%S.%L'

@@ -8,7 +8,7 @@ require 'psych'
 
 module Fluent::Plugin
   class CloudwatchIngestInput < Fluent::Plugin::Input
-    Fluent::Plugin.register_input('cloudwatch_ingest', self)
+    Fluent::Plugin.register_input('cloudwatch_ingest_chaeyk', self)
     helpers :compat_parameters, :parser
 
     desc 'The region of the source cloudwatch logs'
@@ -196,9 +196,9 @@ module Fluent::Plugin
             # See if we have some stored state for this group and stream.
             # If we have then use the stored forward_token to pick up
             # from that point. Otherwise start from the start.
-            if state.store[group] && state.store[group][stream]
+            if state.store[group] && state.store[group][stream] && state.store[group][stream]['token']
               stream_token =
-                (state.store[group][stream] if state.store[group][stream])
+                (state.store[group][stream]['token'] if state.store[group][stream]['token'])
             else
               stream_token = nil
             end
@@ -223,11 +223,47 @@ module Fluent::Plugin
 
               # Once all events for this stream have been processed,
               # in this iteration, store the forward token
-              state.store[group][stream] = response.next_forward_token
+              state.store[group][stream]['token'] = response.next_forward_token
+              state.store[group][stream]['timestamp'] = response.events.last.timestamp
             rescue => boom
               log.error("Unable to retrieve events for stream #{stream} in group #{group}: #{boom}") # rubocop:disable all
-              sleep @api_interval
-              retry
+
+              if true
+                # try again with timestamp instead of forward token
+                if state.store[group] && state.store[group][stream] && state.store[group][stream]['timestamp']
+                  stream_timestamp =
+                    (state.store[group][stream]['timestamp'] if state.store[group][stream]['timestamp'])
+                else
+                  stream_timestamp = nil
+                end
+
+                begin
+                  response = @aws.get_log_events(
+                    log_group_name: group,
+                    log_stream_name: stream,
+                    limit: @limit_events,
+                    start_time: stream_timestamp + 1,
+                    start_from_head: true
+                  )
+
+                  response.events.each do |e|
+                    begin
+                      emit(e, group, stream)
+                    rescue => boom
+                      log.error("Failed to emit event #{e}: #{boom}")
+                    end
+                  end
+
+                  # Once all events for this stream have been processed,
+                  # in this iteration, store the forward token
+                  state.store[group][stream]['token'] = response.next_forward_token
+                  state.store[group][stream]['timestamp'] = response.events.last.timestamp
+                rescue => boom
+                  log.error("Unable to retrieve events for stream #{stream} in group #{group}: #{boom}") # rubocop:disable all
+                  sleep @api_interval
+                  retry
+                end
+              end
             end
           end
         end
