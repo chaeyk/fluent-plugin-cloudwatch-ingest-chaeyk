@@ -38,7 +38,7 @@ module Fluent::Plugin
     desc 'Do not fetch events before this time'
     config_param :event_start_time, :integer, default: 0
     config_section :parse do
-      config_set_default :@type, 'cloudwatch_ingest'
+      config_set_default :@type, 'cloudwatch_ingest_chaeyk'
       desc 'Regular expression with which to parse the event message'
       config_param :expression, :string, default: '^(?<message>.+)$'
       desc 'Take the timestamp from the event rather than the expression'
@@ -134,7 +134,7 @@ module Fluent::Plugin
           break unless response.next_token
           next_token = response.next_token
         rescue => boom
-          log.error("Unable to retrieve log groups: #{boom}")
+          log.error("Unable to retrieve log groups: #{boom.inspect}")
           next_token = nil
           sleep @api_interval
           retry
@@ -167,7 +167,7 @@ module Fluent::Plugin
           break unless response.next_token
           next_token = response.next_token
         rescue => boom
-          log.error("Unable to retrieve log streams for group #{log_group_name} with stream prefix #{log_stream_name_prefix}: #{boom}") # rubocop:disable all
+          log.error("Unable to retrieve log streams for group #{log_group_name} with stream prefix #{log_stream_name_prefix}: #{boom.inspect}") # rubocop:disable all
           log_streams = []
           next_token = nil
           sleep @api_interval
@@ -184,9 +184,9 @@ module Fluent::Plugin
         begin
           state = State.new(@state_file_name, log)
         rescue => boom
-          log.info("Failed lock state. Sleeping for #{@interval}: #{boom}")
+          log.info("Failed lock state. Sleeping for #{@interval}: #{boom.inspect}")
           sleep @interval
-          retry
+          next
         end
 
         # Fetch the streams for each log group
@@ -217,53 +217,55 @@ module Fluent::Plugin
                 begin
                   emit(e, group, stream)
                 rescue => boom
-                  log.error("Failed to emit event #{e}: #{boom}")
+                  log.error("Failed to emit event #{e}: #{boom.inspect}")
                 end
               end
 
               # Once all events for this stream have been processed,
               # in this iteration, store the forward token
               state.store[group][stream]['token'] = response.next_forward_token
-              state.store[group][stream]['timestamp'] = response.events.last.timestamp
-            rescue => boom
-              log.error("Unable to retrieve events for stream #{stream} in group #{group}: #{boom}") # rubocop:disable all
+              state.store[group][stream]['timestamp'] = response.events.last ? response.events.last.timestamp : Time.now.to_i
+            rescue Aws::CloudWatchLogs::Errors::InvalidParameterException => boom
+              log.error("cloudwatch token is broken. trying with timestamp.");
 
-              if true
-                # try again with timestamp instead of forward token
-                if state.store[group] && state.store[group][stream] && state.store[group][stream]['timestamp']
-                  stream_timestamp =
-                    (state.store[group][stream]['timestamp'] if state.store[group][stream]['timestamp'])
-                else
-                  stream_timestamp = nil
-                end
-
-                begin
-                  response = @aws.get_log_events(
-                    log_group_name: group,
-                    log_stream_name: stream,
-                    limit: @limit_events,
-                    start_time: stream_timestamp + 1,
-                    start_from_head: true
-                  )
-
-                  response.events.each do |e|
-                    begin
-                      emit(e, group, stream)
-                    rescue => boom
-                      log.error("Failed to emit event #{e}: #{boom}")
-                    end
-                  end
-
-                  # Once all events for this stream have been processed,
-                  # in this iteration, store the forward token
-                  state.store[group][stream]['token'] = response.next_forward_token
-                  state.store[group][stream]['timestamp'] = response.events.last.timestamp
-                rescue => boom
-                  log.error("Unable to retrieve events for stream #{stream} in group #{group}: #{boom}") # rubocop:disable all
-                  sleep @api_interval
-                  retry
-                end
+              # try again with timestamp instead of forward token
+              if state.store[group] && state.store[group][stream] && state.store[group][stream]['timestamp']
+                stream_timestamp =
+                  (state.store[group][stream]['timestamp'] + 1 if state.store[group][stream]['timestamp'])
+              else
+                stream_timestamp = nil
               end
+
+              begin
+                response = @aws.get_log_events(
+                  log_group_name: group,
+                  log_stream_name: stream,
+                  limit: @limit_events,
+                  start_time: stream_timestamp,
+                  start_from_head: true
+                )
+
+                response.events.each do |e|
+                  begin
+                    emit(e, group, stream)
+                  rescue => boom
+                    log.error("Failed to emit event #{e}: #{boom.inspect}")
+                  end
+                end
+
+                # Once all events for this stream have been processed,
+                # in this iteration, store the forward token
+                state.store[group][stream]["token"] = response.next_forward_token
+                state.store[group][stream]['timestamp'] = response.events.last ? response.events.last.timestamp : Time.now.to_i
+              rescue => boom
+                log.error("Unable to retrieve events for stream #{stream} in group #{group}: #{boom.inspect}") # rubocop:disable all
+                sleep @api_interval
+                next
+              end
+            rescue => boom
+              log.error("Unable to retrieve events for stream #{stream} in group #{group}: #{boom.inspect}") # rubocop:disable all
+              sleep @api_interval
+              next
             end
           end
         end
@@ -274,7 +276,7 @@ module Fluent::Plugin
           state.save
           state.close
         rescue
-          log.error("Unable to save state file: #{boom}")
+          log.error("Unable to save state file: #{boom.inspect}")
         end
         log.info("Pausing for #{@interval}")
         sleep @interval
@@ -288,7 +290,7 @@ module Fluent::Plugin
       def initialize(filepath, log)
         @filepath = filepath
         @log = log
-        @store = Hash.new { |h, k| h[k] = {} }
+        @store = Hash.new { |h, k| h[k] = Hash.new { |h1, k1| h1[k1] = {} } }
 
         if File.exist?(filepath)
           self.statefile = Pathname.new(@filepath).open('r+')
@@ -298,7 +300,7 @@ module Fluent::Plugin
             self.statefile = Pathname.new(@filepath).open('w+')
             save
           rescue => boom
-            @log.error("Unable to create new file #{statefile.path}: #{boom}")
+            @log.error("Unable to create new file #{statefile.path}: #{boom.inspect}")
           end
         end
 
@@ -314,6 +316,7 @@ module Fluent::Plugin
 
       def save
         statefile.rewind
+        statefile.truncate(0)
         statefile.write(Psych.dump(@store))
         @log.info("Saved state to #{statefile.path}")
         statefile.rewind
