@@ -5,14 +5,14 @@ $LOAD_PATH.unshift(lib) unless $LOAD_PATH.include?(lib)
 require 'fluent/plugin/cloudwatch/ingest/version'
 
 Gem::Specification.new do |spec|
-  spec.name          = 'fluent-plugin-cloudwatch-ingest'
+  spec.name          = 'fluent-plugin-cloudwatch-ingest-chaeyk'
   spec.version       = Fluent::Plugin::Cloudwatch::Ingest::VERSION
-  spec.authors       = ['Sam Pointer']
-  spec.email         = ['san@outsidethe.net']
+  spec.authors       = ['chaeyk']
+  spec.email         = ['chaeyk@gmail.com']
 
   spec.summary       = 'Fluentd plugin to ingest AWS Cloudwatch logs'
   spec.description   = 'Fluentd plugin to ingest AWS Cloudwatch logs'
-  spec.homepage      = 'https://github.com/sampointer/fluent-plugin-cloudwatch-ingest'
+  spec.homepage      = 'https://github.com/sampointer/fluent-plugin-cloudwatch-ingest-chaeyk'
 
   # Prevent pushing this gem to RubyGems.org by setting 'allowed_push_host', or
   # delete this section to allow pushing this gem to any host.
@@ -28,7 +28,7 @@ Gem::Specification.new do |spec|
   spec.require_paths = ['lib']
 
   spec.add_development_dependency 'bundler', '~> 1.10'
-  spec.add_development_dependency 'rake', '~> 10.0'
+  spec.add_development_dependency 'rake', '~> 10.5'
   spec.add_development_dependency 'rspec'
   spec.add_development_dependency 'rubocop'
 
