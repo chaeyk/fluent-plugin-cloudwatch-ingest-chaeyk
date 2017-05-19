@@ -189,6 +189,8 @@ module Fluent::Plugin
           next
         end
 
+        event_count = 0
+
         # Fetch the streams for each log group
         log_groups(@log_group_name_prefix).each do |group|
           # For each log stream get and emit the events
@@ -221,6 +223,7 @@ module Fluent::Plugin
               response.events.each do |e|
                 begin
                   emit(e, group, stream)
+                  event_count++
                 rescue => boom
                   log.error("Failed to emit event #{e}: #{boom.inspect}")
                 end
@@ -246,6 +249,7 @@ module Fluent::Plugin
                 response.events.each do |e|
                   begin
                     emit(e, group, stream)
+                    event_count++
                   rescue => boom
                     log.error("Failed to emit event #{e}: #{boom.inspect}")
                   end
@@ -276,8 +280,14 @@ module Fluent::Plugin
         rescue
           log.error("Unable to save state file: #{boom.inspect}")
         end
-        log.info("Pausing for #{@interval}")
-        sleep @interval
+
+        if event_count > 0
+          sleep_interval = @interval
+        else
+          sleep_interval = @api_interval # when there is no events, slow down
+
+        log.info("Pausing for #{sleep_interval}")
+        sleep sleep_interval
       end
     end
 
