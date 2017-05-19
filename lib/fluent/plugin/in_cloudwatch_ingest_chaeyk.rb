@@ -223,7 +223,7 @@ module Fluent::Plugin
               response.events.each do |e|
                 begin
                   emit(e, group, stream)
-                  event_count++
+                  event_count = event_count + 1
                 rescue => boom
                   log.error("Failed to emit event #{e}: #{boom.inspect}")
                 end
@@ -249,7 +249,7 @@ module Fluent::Plugin
                 response.events.each do |e|
                   begin
                     emit(e, group, stream)
-                    event_count++
+                    event_count = event_count + 1
                   rescue => boom
                     log.error("Failed to emit event #{e}: #{boom.inspect}")
                   end
@@ -285,6 +285,7 @@ module Fluent::Plugin
           sleep_interval = @interval
         else
           sleep_interval = @api_interval # when there is no events, slow down
+        end
 
         log.info("Pausing for #{sleep_interval}")
         sleep sleep_interval
