@@ -184,7 +184,7 @@ module Fluent::Plugin
         begin
           state = State.new(@state_file_name, log)
         rescue => boom
-          log.info("Failed lock state. Sleeping for #{@interval}: #{boom.inspect} #{boom.backtrace}")
+          log.info("Failed lock state. Sleeping for #{@interval}: #{boom.inspect}")
           sleep @interval
           next
         end
