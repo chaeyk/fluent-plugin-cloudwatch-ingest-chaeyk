@@ -237,11 +237,14 @@ module Fluent::Plugin
 
               # Once all events for this stream have been processed,
               # in this iteration, store the forward token
-              if stream_token || event_count
+              log.info("stream: #{stream} token: #{stream_token} count: #{event_count}")
+              if stream_token or response.events.count > 0
+                log.info("saving: #{response.events}")
                 state.store[group][stream]['token'] = response.next_forward_token
                 state.store[group][stream]['timestamp'] = response.events.last ? response.events.last.timestamp : stream_timestamp
               else
-                state.store[group][stream] = nil
+                log.info("throw out")
+                state.store[group].delete(stream)
               end
             rescue Aws::CloudWatchLogs::Errors::InvalidParameterException => boom
               log.error("cloudwatch token is expired or broken. trying with timestamp.");
