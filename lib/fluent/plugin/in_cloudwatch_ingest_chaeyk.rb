@@ -242,12 +242,11 @@ module Fluent::Plugin
               if !has_stream_timestamp && response.events.count == 0
                 # This stream has returned no data ever.
                 # In this case, don't save state (token could be an invalid one)
-                state.store[group].delete(stream)
               else
                 # Once all events for this stream have been processed,
                 # in this iteration, store the forward token
-                state.store[group][stream]['token'] = response.next_forward_token
-                state.store[group][stream]['timestamp'] = response.events.last ? response.events.last.timestamp : stream_timestamp
+                state.new_store[group][stream]['token'] = response.next_forward_token
+                state.new_store[group][stream]['timestamp'] = response.events.last ? response.events.last.timestamp : stream_timestamp
               end
             rescue Aws::CloudWatchLogs::Errors::InvalidParameterException => boom
               log.error("cloudwatch token is expired or broken. trying with timestamp.");
@@ -273,8 +272,8 @@ module Fluent::Plugin
 
                 # Once all events for this stream have been processed,
                 # in this iteration, store the forward token
-                state.store[group][stream]["token"] = response.next_forward_token
-                state.store[group][stream]['timestamp'] = response.events.last ? response.events.last.timestamp : steam_timestamp
+                state.new_store[group][stream]["token"] = response.next_forward_token
+                state.new_store[group][stream]['timestamp'] = response.events.last ? response.events.last.timestamp : steam_timestamp
               rescue => boom
                 log.error("Unable to retrieve events for stream #{stream} in group #{group}: #{boom.inspect}") # rubocop:disable all
                 sleep @api_interval
@@ -288,8 +287,7 @@ module Fluent::Plugin
           end
         end
 
-        log.info('Pruning and saving state')
-        state.prune(log_groups(@log_group_name_prefix)) # Remove dead streams
+        log.info('Saving state')
         begin
           state.save
           state.close
@@ -311,12 +309,13 @@ module Fluent::Plugin
 
     class CloudwatchIngestInput::State
       class LockFailed < RuntimeError; end
-      attr_accessor :statefile, :store
+      attr_accessor :statefile, :store, :new_store
 
       def initialize(filepath, log)
         @filepath = filepath
         @log = log
         @store = Hash.new { |h, k| h[k] = Hash.new { |h1, k1| h1[k1] = {} } }
+        @new_store = Hash.new { |h, k| h[k] = Hash.new { |h1, k1| h1[k1] = {} } }
 
         if File.exist?(filepath)
           self.statefile = Pathname.new(@filepath).open('r+')
@@ -356,21 +355,13 @@ module Fluent::Plugin
       def save
         statefile.rewind
         statefile.truncate(0)
-        statefile.write(Psych.dump(@store))
+        statefile.write(Psych.dump(@new_store))
         @log.info("Saved state to #{statefile.path}")
         statefile.rewind
       end
 
       def close
         statefile.close
-      end
-
-      def prune(log_groups)
-        groups_before = @store.keys.size
-        @store.delete_if { |k, _v| true unless log_groups.include?(k) }
-        @log.info("Pruned #{groups_before - @store.keys.size} keys from store")
-
-        # TODO: also prune streams as these are most likely to be transient
       end
     end
   end
