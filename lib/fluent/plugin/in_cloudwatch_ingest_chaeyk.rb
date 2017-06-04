@@ -237,13 +237,10 @@ module Fluent::Plugin
 
               # Once all events for this stream have been processed,
               # in this iteration, store the forward token
-              log.info("stream: #{stream} token: #{stream_token} count: #{event_count}")
               if stream_token or response.events.count > 0
-                log.info("saving: #{response.events}")
                 state.store[group][stream]['token'] = response.next_forward_token
                 state.store[group][stream]['timestamp'] = response.events.last ? response.events.last.timestamp : stream_timestamp
               else
-                log.info("throw out")
                 state.store[group].delete(stream)
               end
             rescue Aws::CloudWatchLogs::Errors::InvalidParameterException => boom
