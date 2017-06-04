@@ -204,15 +204,20 @@ module Fluent::Plugin
 
       has_stream_timestamp = true if state.store[group][stream]['timestamp']
 
-      if !has_stream_timestamp && response.events.count == 0
+      if !has_stream_timestamp && response.events.count.zero?
         # This stream has returned no data ever.
         # In this case, don't save state (token could be an invalid one)
       else
         # Once all events for this stream have been processed,
         # in this iteration, store the forward token
         state.new_store[group][stream]['token'] = response.next_forward_token
-        state.new_store[group][stream]['timestamp'] = response.events.last ?
-          response.events.last.timestamp : state.store[group][stream]['timestamp']
+        if response.events.last
+          state.new_store[group][stream]['timestamp'] =
+            response.events.last.timestamp
+        else
+          state.new_store[group][stream]['timestamp'] =
+            state.store[group][stream]['timestamp']
+        end
       end
 
       return event_count
@@ -223,7 +228,8 @@ module Fluent::Plugin
         begin
           state = State.new(@state_file_name, log)
         rescue => boom
-          log.info("Failed lock state. Sleeping for #{@interval}: #{boom.inspect}")
+          log.info("Failed lock state. Sleeping for #{@interval}: "\
+                   "#{boom.inspect}")
           sleep @interval
           next
         end
@@ -234,9 +240,7 @@ module Fluent::Plugin
         log_groups(@log_group_name_prefix).each do |group|
           # For each log stream get and emit the events
           log_streams(group, @log_stream_name_prefix).each do |stream|
-            if ! state.store[group][stream]
-              state.store[group][stream] = {}
-            end
+            state.store[group][stream] = {} unless state.store[group][stream]
 
             log.info("processing stream: #{stream}")
 
@@ -245,23 +249,29 @@ module Fluent::Plugin
             # from that point. Otherwise start from the start.
 
             begin
-              event_count += process_stream(group, stream, state.store[group][stream]['token'], @event_start_time, state)
-            rescue Aws::CloudWatchLogs::Errors::InvalidParameterException => boom
-              log.error('cloudwatch token is expired or broken. trying with timestamp.')
+              event_count += process_stream(group, stream,
+                                            state.store[group][stream]['token'],
+                                            @event_start_time, state)
+            rescue Aws::CloudWatchLogs::Errors::InvalidParameterException
+              log.error('cloudwatch token is expired or broken. '\
+                        'trying with timestamp.')
 
               # try again with timestamp instead of forward token
               begin
-                stream_timestamp = state.store[group][stream]['timestamp']
-                stream_timestamp = @event_start_time unless stream_timestamp
+                timestamp = state.store[group][stream]['timestamp']
+                timestamp = @event_start_time unless timestamp
 
-                event_count += process_stream(group, stream, nil, stream_timestamp, state)
+                event_count += process_stream(group, stream,
+                                              nil, timestamp, state)
               rescue => boom
-                log.error("Unable to retrieve events for stream #{stream} in group #{group}: #{boom.inspect}") # rubocop:disable all
+                log.error("Unable to retrieve events for stream #{stream} "\
+                          "in group #{group}: #{boom.inspect}") # rubocop:disable all
                 sleep @api_interval
                 next
               end
             rescue => boom
-              log.error("Unable to retrieve events for stream #{stream} in group #{group}: #{boom.inspect}") # rubocop:disable all
+              log.error("Unable to retrieve events for stream #{stream} "\
+                        "in group #{group}: #{boom.inspect}") # rubocop:disable all
               sleep @api_interval
               next
             end
@@ -295,8 +305,8 @@ module Fluent::Plugin
       def initialize(filepath, log)
         @filepath = filepath
         @log = log
-        @store = Hash.new { |h, k| h[k] = Hash.new { |h1, k1| h1[k1] = {} } }
-        @new_store = Hash.new { |h, k| h[k] = Hash.new { |h1, k1| h1[k1] = {} } }
+        @store = Hash.new { |h, k| h[k] = Hash.new { |x, y| x[y] = {} } }
+        @new_store = Hash.new { |h, k| h[k] = Hash.new { |x, y| x[y] = {} } }
 
         if File.exist?(filepath)
           self.statefile = Pathname.new(@filepath).open('r+')
@@ -306,7 +316,8 @@ module Fluent::Plugin
             self.statefile = Pathname.new(@filepath).open('w+')
             save
           rescue => boom
-            @log.error("Unable to create new file #{statefile.path}: #{boom.inspect}")
+            @log.error("Unable to create new file #{statefile.path}: "\
+                       "#{boom.inspect}")
           end
         end
 
@@ -320,11 +331,14 @@ module Fluent::Plugin
           @store.merge!(Psych.safe_load(statefile.read))
 
           # Migrate old state file
-          @store.each { |group, streams|
-            streams.update(streams) { |name, stream|
-              (stream.is_a? String) ? { 'token' => stream, 'timestamp' => Time.now.to_i } : stream
-            }
-          }
+          @store.each do |_group, streams|
+            streams.update(streams) do |_name, stream|
+              if stream.is_a? String
+                return { 'token' => stream, 'timestamp' => Time.now.to_i }
+              end
+              return stream
+            end
+          end
 
           @log.info("Loaded #{@store.keys.size} groups from #{statefile.path}")
         rescue
