@@ -201,6 +201,8 @@ module Fluent::Plugin
               state.store[group][stream] = {}
             end
 
+            log.info("processing stream: #{stream}")
+
             # See if we have some stored state for this group and stream.
             # If we have then use the stored forward_token to pick up
             # from that point. Otherwise start from the start.
@@ -211,8 +213,10 @@ module Fluent::Plugin
             end
 
             if state.store[group][stream]['timestamp']
+              has_stream_timestamp = true
               stream_timestamp = state.store[group][stream]['timestamp']
             else
+              has_stream_timestamp = false
               stream_timestamp = @event_start_time
             end
 
@@ -235,13 +239,15 @@ module Fluent::Plugin
                 end
               end
 
-              # Once all events for this stream have been processed,
-              # in this iteration, store the forward token
-              if stream_token or response.events.count > 0
+              if !has_stream_timestamp && response.events.count == 0
+                # This stream has returned no data ever.
+                # In this case, don't save state (token could be an invalid one)
+                state.store[group].delete(stream)
+              else
+                # Once all events for this stream have been processed,
+                # in this iteration, store the forward token
                 state.store[group][stream]['token'] = response.next_forward_token
                 state.store[group][stream]['timestamp'] = response.events.last ? response.events.last.timestamp : stream_timestamp
-              else
-                state.store[group].delete(stream)
               end
             rescue Aws::CloudWatchLogs::Errors::InvalidParameterException => boom
               log.error("cloudwatch token is expired or broken. trying with timestamp.");
