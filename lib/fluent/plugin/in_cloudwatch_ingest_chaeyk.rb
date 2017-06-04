@@ -181,6 +181,43 @@ module Fluent::Plugin
       return log_streams
     end
 
+    def process_stream(group, stream, next_token, start_time, state)
+      event_count = 0
+
+      response = @aws.get_log_events(
+        log_group_name: group,
+        log_stream_name: stream,
+        next_token: next_token,
+        limit: @limit_events,
+        start_time: start_time,
+        start_from_head: @oldest_logs_first
+      )
+
+      response.events.each do |e|
+        begin
+          emit(e, group, stream)
+          event_count += 1
+        rescue => boom
+          log.error("Failed to emit event #{e}: #{boom.inspect}")
+        end
+      end
+
+      has_stream_timestamp = true if state.store[group][stream]['timestamp']
+
+      if !has_stream_timestamp && response.events.count == 0
+        # This stream has returned no data ever.
+        # In this case, don't save state (token could be an invalid one)
+      else
+        # Once all events for this stream have been processed,
+        # in this iteration, store the forward token
+        state.new_store[group][stream]['token'] = response.next_forward_token
+        state.new_store[group][stream]['timestamp'] = response.events.last ?
+          response.events.last.timestamp : state.store[group][stream]['timestamp']
+      end
+
+      return event_count
+    end
+
     def run
       until @finished
         begin
@@ -206,74 +243,18 @@ module Fluent::Plugin
             # See if we have some stored state for this group and stream.
             # If we have then use the stored forward_token to pick up
             # from that point. Otherwise start from the start.
-            if state.store[group][stream]['token']
-              stream_token = state.store[group][stream]['token']
-            else
-              stream_token = nil
-            end
-
-            if state.store[group][stream]['timestamp']
-              has_stream_timestamp = true
-              stream_timestamp = state.store[group][stream]['timestamp']
-            else
-              has_stream_timestamp = false
-              stream_timestamp = @event_start_time
-            end
 
             begin
-              response = @aws.get_log_events(
-                log_group_name: group,
-                log_stream_name: stream,
-                next_token: stream_token,
-                limit: @limit_events,
-                start_time: @event_start_time,
-                start_from_head: @oldest_logs_first
-              )
-
-              response.events.each do |e|
-                begin
-                  emit(e, group, stream)
-                  event_count = event_count + 1
-                rescue => boom
-                  log.error("Failed to emit event #{e}: #{boom.inspect}")
-                end
-              end
-
-              if !has_stream_timestamp && response.events.count == 0
-                # This stream has returned no data ever.
-                # In this case, don't save state (token could be an invalid one)
-              else
-                # Once all events for this stream have been processed,
-                # in this iteration, store the forward token
-                state.new_store[group][stream]['token'] = response.next_forward_token
-                state.new_store[group][stream]['timestamp'] = response.events.last ? response.events.last.timestamp : stream_timestamp
-              end
+              event_count += process_stream(group, stream, state.store[group][stream]['token'], @event_start_time, state)
             rescue Aws::CloudWatchLogs::Errors::InvalidParameterException => boom
-              log.error("cloudwatch token is expired or broken. trying with timestamp.");
+              log.error('cloudwatch token is expired or broken. trying with timestamp.')
 
               # try again with timestamp instead of forward token
               begin
-                response = @aws.get_log_events(
-                  log_group_name: group,
-                  log_stream_name: stream,
-                  limit: @limit_events,
-                  start_time: stream_timestamp,
-                  start_from_head: true
-                )
+                stream_timestamp = state.store[group][stream]['timestamp']
+                stream_timestamp = @event_start_time unless stream_timestamp
 
-                response.events.each do |e|
-                  begin
-                    emit(e, group, stream)
-                    event_count = event_count + 1
-                  rescue => boom
-                    log.error("Failed to emit event #{e}: #{boom.inspect}")
-                  end
-                end
-
-                # Once all events for this stream have been processed,
-                # in this iteration, store the forward token
-                state.new_store[group][stream]["token"] = response.next_forward_token
-                state.new_store[group][stream]['timestamp'] = response.events.last ? response.events.last.timestamp : steam_timestamp
+                event_count += process_stream(group, stream, nil, stream_timestamp, state)
               rescue => boom
                 log.error("Unable to retrieve events for stream #{stream} in group #{group}: #{boom.inspect}") # rubocop:disable all
                 sleep @api_interval
