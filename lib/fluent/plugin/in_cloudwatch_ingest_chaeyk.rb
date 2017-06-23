@@ -282,7 +282,7 @@ module Fluent::Plugin
         begin
           state.save
           state.close
-        rescue
+        rescue => boom
           log.error("Unable to save state file: #{boom.inspect}")
         end
 
